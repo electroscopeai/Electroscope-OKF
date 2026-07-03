@@ -4,6 +4,7 @@ import path from 'node:path';
 const RESERVED_CHARACTERS = /[^a-z0-9]+/gi;
 
 const normalizeList = (items) => Array.from(new Set((items ?? []).filter(Boolean)));
+const dedupeById = (items) => Array.from(new Map((items ?? []).filter(Boolean).map((item) => [item.id, item])).values());
 
 export const slugify = (value) =>
   String(value ?? '')
@@ -11,6 +12,24 @@ export const slugify = (value) =>
     .toLowerCase()
     .replace(RESERVED_CHARACTERS, '-')
     .replace(/^-+|-+$/g, '') || 'item';
+
+const assignUniqueSlugs = (items) => {
+  const used = new Set();
+  return items.map((item) => {
+    const baseSlug = slugify(item.name);
+    let slug = baseSlug;
+    if (used.has(slug)) {
+      slug = `${baseSlug}-${String(item.id).slice(0, 8)}`;
+    }
+    let collisionIndex = 2;
+    while (used.has(slug)) {
+      slug = `${baseSlug}-${collisionIndex}`;
+      collisionIndex += 1;
+    }
+    used.add(slug);
+    return { ...item, slug };
+  });
+};
 
 export const frontmatter = (data) => {
   const lines = ['---'];
@@ -35,6 +54,12 @@ const conceptDocument = ({ meta, sections }) =>
 
 const bulletLines = (items, mapItem) => (items.length ? items.map(mapItem).join('\n') : '- None');
 
+const clientDealLink = (deal) => `../deals/${deal.slug}.md`;
+const dealClientLink = (client) => `../clients/${client.slug}.md`;
+const dealPersonLink = (person) => `../people/${person.slug}.md`;
+const personClientLink = (client) => `../clients/${client.slug}.md`;
+const personDealLink = (deal) => `../deals/${deal.slug}.md`;
+
 const clientDocument = (client) => conceptDocument({
   meta: {
     type: 'Electroscope Client',
@@ -54,7 +79,7 @@ const clientDocument = (client) => conceptDocument({
       client.website_domain ? `Website: ${client.website_domain}` : null,
     ].filter(Boolean).join('\n\n') || 'No summary available.',
     '# Related Deals',
-    bulletLines(client.deals ?? [], (deal) => `- [${deal.name}](/deals/${deal.slug}.md)${deal.stage?.name ? ` - ${deal.stage.name}` : ''}`),
+    bulletLines(client.deals ?? [], (deal) => `- [${deal.name}](${clientDealLink(deal)})${deal.stage?.name ? ` - ${deal.stage.name}` : ''}`),
   ],
 });
 
@@ -71,14 +96,14 @@ const dealDocument = (deal) => conceptDocument({
   sections: [
     '# Summary',
     [
-      deal.client ? `Client: [${deal.client.name}](/clients/${deal.client.slug}.md)` : null,
+      deal.client ? `Client: [${deal.client.name}](${dealClientLink(deal.client)})` : null,
       deal.stage?.name ? `Stage: ${deal.stage.name}` : null,
       deal.status_brief ? `Status: ${deal.status_brief}` : null,
       deal.next_steps ? `Next steps: ${deal.next_steps}` : null,
       deal.revenue !== null && deal.revenue !== undefined ? `Revenue: ${deal.revenue}` : null,
     ].filter(Boolean).join('\n\n') || 'No summary available.',
     '# Related People',
-    bulletLines(deal.people ?? [], (person) => `- [${person.name}](/people/${person.slug}.md)${person.deal_role ? ` - ${person.deal_role}` : ''}`),
+    bulletLines(deal.people ?? [], (person) => `- [${person.name}](${dealPersonLink(person)})${person.deal_role ? ` - ${person.deal_role}` : ''}`),
   ],
 });
 
@@ -97,14 +122,14 @@ const personDocument = (person) => conceptDocument({
     [
       person.title ? `Title: ${person.title}` : null,
       person.email ? `Email: ${person.email}` : null,
-      person.current_client ? `Current client: [${person.current_client.name}](/clients/${person.current_client.slug}.md)` : null,
+      person.current_client ? `Current client: [${person.current_client.name}](${personClientLink(person.current_client)})` : null,
       person.communication_style ? `Communication style: ${person.communication_style}` : null,
       person.budget_authority ? `Budget authority: ${person.budget_authority}` : null,
     ].filter(Boolean).join('\n\n') || 'No summary available.',
     '# Related Clients',
-    bulletLines(person.related_clients ?? [], (client) => `- [${client.name}](/clients/${client.slug}.md)`),
+    bulletLines(person.related_clients ?? [], (client) => `- [${client.name}](${personClientLink(client)})`),
     '# Related Deals',
-    bulletLines(person.related_deals ?? [], (deal) => `- [${deal.name}](/deals/${deal.slug}.md)${deal.deal_role ? ` - ${deal.deal_role}` : ''}`),
+    bulletLines(person.related_deals ?? [], (deal) => `- [${deal.name}](${personDealLink(deal)})${deal.deal_role ? ` - ${deal.deal_role}` : ''}`),
   ],
 });
 
@@ -132,54 +157,69 @@ const buildLog = (bundle) => {
   ].join('\n');
 };
 
+const mapUniqueNestedClients = (clients, clientSlugById) => dedupeById(clients).map((client) => ({
+  ...client,
+  slug: clientSlugById.get(client.id) ?? slugify(client.name),
+}));
+
+const mapUniqueNestedDeals = (deals, dealSlugById, clientSlugById) => dedupeById(deals).map((deal) => ({
+  ...deal,
+  slug: dealSlugById.get(deal.id) ?? slugify(deal.name),
+  client: deal.client
+    ? {
+        ...deal.client,
+        slug: clientSlugById.get(deal.client.id) ?? slugify(deal.client.name),
+      }
+    : null,
+}));
+
+const mapUniqueNestedPeople = (people, personSlugById) => dedupeById(people).map((person) => ({
+  ...person,
+  slug: personSlugById.get(person.id) ?? slugify(person.name),
+}));
+
 export const normalizeBundle = ({ status, clients, deals, people, scope }) => {
-  const clientById = new Map();
-  const normalizedClients = clients.map((client) => {
-    const slug = slugify(client.name);
-    const normalized = {
-      ...client,
-      slug,
-      deals: (client.deals ?? []).map((deal) => ({
-        ...deal,
-        slug: slugify(deal.name),
-      })),
-    };
-    clientById.set(client.id, normalized);
-    return normalized;
-  });
+  const normalizedClients = assignUniqueSlugs(dedupeById(clients)).map((client) => ({
+    ...client,
+    deals: dedupeById(client.deals ?? []),
+  }));
+  const clientSlugById = new Map(normalizedClients.map((client) => [client.id, client.slug]));
 
-  const normalizedDeals = deals.map((deal) => ({
+  const normalizedDeals = assignUniqueSlugs(dedupeById(deals)).map((deal) => ({
     ...deal,
-    slug: slugify(deal.name),
-    client: deal.client ? { ...deal.client, slug: clientById.get(deal.client.id)?.slug ?? slugify(deal.client.name) } : null,
-    people: (deal.people ?? []).map((person) => ({
-      ...person,
-      slug: slugify(person.name),
-    })),
-  }));
-
-  const normalizedPeople = people.map((person) => ({
-    ...person,
-    slug: slugify(person.name),
-    current_client: person.current_client
-      ? { ...person.current_client, slug: clientById.get(person.current_client.id)?.slug ?? slugify(person.current_client.name) }
+    client: deal.client
+      ? { ...deal.client, slug: clientSlugById.get(deal.client.id) ?? slugify(deal.client.name) }
       : null,
-    related_clients: (person.related_clients ?? []).map((client) => ({
-      ...client,
-      slug: clientById.get(client.id)?.slug ?? slugify(client.name),
-    })),
-    related_deals: (person.related_deals ?? []).map((deal) => ({
-      ...deal,
-      slug: slugify(deal.name),
-    })),
+    people: dedupeById(deal.people ?? []),
   }));
+  const dealSlugById = new Map(normalizedDeals.map((deal) => [deal.id, deal.slug]));
+
+  const normalizedPeople = assignUniqueSlugs(dedupeById(people)).map((person) => ({
+    ...person,
+    current_client: person.current_client
+      ? { ...person.current_client, slug: clientSlugById.get(person.current_client.id) ?? slugify(person.current_client.name) }
+      : null,
+    related_clients: dedupeById(person.related_clients ?? []),
+    related_deals: dedupeById(person.related_deals ?? []),
+  }));
+  const personSlugById = new Map(normalizedPeople.map((person) => [person.id, person.slug]));
 
   return {
     scope,
     status,
-    clients: normalizedClients,
-    deals: normalizedDeals,
-    people: normalizedPeople,
+    clients: normalizedClients.map((client) => ({
+      ...client,
+      deals: mapUniqueNestedDeals(client.deals ?? [], dealSlugById, clientSlugById),
+    })),
+    deals: normalizedDeals.map((deal) => ({
+      ...deal,
+      people: mapUniqueNestedPeople(deal.people ?? [], personSlugById),
+    })),
+    people: normalizedPeople.map((person) => ({
+      ...person,
+      related_clients: mapUniqueNestedClients(person.related_clients ?? [], clientSlugById),
+      related_deals: mapUniqueNestedDeals(person.related_deals ?? [], dealSlugById, clientSlugById),
+    })),
   };
 };
 

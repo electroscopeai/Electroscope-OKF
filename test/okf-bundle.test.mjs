@@ -57,7 +57,38 @@ test('writeBundle writes index, log, and concept documents with cross-links', as
   assert.match(index, /\[Acme Corp\]\(clients\/acme-corp.md\)/);
   assert.match(log, /Exported 1 clients, 1 deals, and 1 people/);
   assert.match(clientDoc, /type: "Electroscope Client"/);
-  assert.match(clientDoc, /\[Platform Renewal\]\(\/deals\/platform-renewal.md\)/);
-  assert.match(dealDoc, /\[Taylor Buyer\]\(\/people\/taylor-buyer.md\)/);
-  assert.match(personDoc, /\[Acme Corp\]\(\/clients\/acme-corp.md\)/);
+  assert.match(clientDoc, /\[Platform Renewal\]\(\.\.\/deals\/platform-renewal.md\)/);
+  assert.match(dealDoc, /\[Taylor Buyer\]\(\.\.\/people\/taylor-buyer.md\)/);
+  assert.match(personDoc, /\[Acme Corp\]\(\.\.\/clients\/acme-corp.md\)/);
+});
+
+test('normalizeBundle dedupes repeated entities and preserves unique slugs for colliding names', () => {
+  const bundle = normalizeBundle({
+    scope: 'tenant',
+    status: { client_count: 1, deal_count: 1 },
+    clients: [{
+      id: 'client-1',
+      name: 'Acme Corp',
+      deals: [{ id: 'deal-1', name: 'Platform Renewal' }],
+    }],
+    deals: [{
+      id: 'deal-1',
+      name: 'Platform Renewal',
+      client: { id: 'client-1', name: 'Acme Corp' },
+      people: [
+        { id: 'person-1', name: 'Taylor Buyer' },
+        { id: 'person-1', name: 'Taylor Buyer' },
+        { id: 'person-2', name: 'Taylor Buyer' },
+      ],
+    }],
+    people: [
+      { id: 'person-1', name: 'Taylor Buyer', related_clients: [], related_deals: [] },
+      { id: 'person-1', name: 'Taylor Buyer', related_clients: [], related_deals: [] },
+      { id: 'person-2', name: 'Taylor Buyer', related_clients: [], related_deals: [] },
+    ],
+  });
+
+  assert.equal(bundle.people.length, 2);
+  assert.deepEqual(bundle.people.map((person) => person.slug), ['taylor-buyer', 'taylor-buyer-person-2']);
+  assert.deepEqual(bundle.deals[0].people.map((person) => person.slug), ['taylor-buyer', 'taylor-buyer-person-2']);
 });

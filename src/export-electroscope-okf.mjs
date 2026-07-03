@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { ElectroscopeMcpClient } from './lib/mcp-client.mjs';
 import { normalizeBundle, writeBundle } from './lib/okf-bundle.mjs';
+import { buildDealPeopleById, collectSearchResults } from './lib/exporter.mjs';
 
 const parseArgs = (argv) => {
   const args = {};
@@ -29,49 +30,44 @@ const outDir = path.resolve(args.out ?? `./bundles/${args['tenant-slug'] ?? 'ele
 const client = new ElectroscopeMcpClient({ baseUrl, bearerToken: mcpToken });
 
 const statusResult = await client.callTool('get_status', { scope });
-const clientsResult = await client.callTool('search_clients', {
+const clients = await collectSearchResults({
+  client,
+  toolName: 'search_clients',
   scope,
   query: args['client-query'] ?? '',
   limit,
 });
-const dealsResult = await client.callTool('search_deals', {
+const deals = await collectSearchResults({
+  client,
+  toolName: 'search_deals',
   scope,
   query: args['deal-query'] ?? '',
   limit,
 });
-const peopleResult = await client.callTool('search_people', {
+const people = await collectSearchResults({
+  client,
+  toolName: 'search_people',
   scope,
   query: args['person-query'] ?? '',
   limit,
 });
 
-const detailedClients = await Promise.all((clientsResult.structuredContent?.clients ?? []).map(async (clientRow) => {
+const detailedClients = await Promise.all(clients.map(async (clientRow) => {
   const detail = await client.callTool('get_client', { clientId: clientRow.id });
   return detail.structuredContent;
 }));
 
-const detailedDeals = await Promise.all((dealsResult.structuredContent?.deals ?? []).map(async (dealRow) => {
+const detailedDeals = await Promise.all(deals.map(async (dealRow) => {
   const detail = await client.callTool('get_deal', { dealId: dealRow.id });
   return detail.structuredContent;
 }));
 
-const detailedPeople = await Promise.all((peopleResult.structuredContent?.people ?? []).map(async (personRow) => {
+const detailedPeople = await Promise.all(people.map(async (personRow) => {
   const detail = await client.callTool('get_person', { personId: personRow.id });
   return detail.structuredContent;
 }));
 
-const dealPeopleById = new Map();
-for (const person of detailedPeople) {
-  for (const relatedDeal of person.related_deals ?? []) {
-    const existing = dealPeopleById.get(relatedDeal.id) ?? [];
-    existing.push({
-      id: person.id,
-      name: person.name,
-      deal_role: relatedDeal.deal_role ?? null,
-    });
-    dealPeopleById.set(relatedDeal.id, existing);
-  }
-}
+const dealPeopleById = buildDealPeopleById(detailedPeople);
 
 const bundle = normalizeBundle({
   scope,
