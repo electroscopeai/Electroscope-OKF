@@ -5,6 +5,7 @@ Electroscope-OKF is a proof-of-concept sibling repository for exporting Electros
 Primary OKF references:
 - https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf
 - https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md
+- https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing/
 
 ## Purpose
 
