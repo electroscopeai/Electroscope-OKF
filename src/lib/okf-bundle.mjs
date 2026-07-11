@@ -60,6 +60,36 @@ const dealPersonLink = (person) => `../people/${person.slug}.md`;
 const personClientLink = (client) => `../clients/${client.slug}.md`;
 const personDealLink = (deal) => `../deals/${deal.slug}.md`;
 
+const meetingDocument = (meeting) => conceptDocument({
+  meta: {
+    type: meeting.kind === 'personal' ? 'Electroscope Personal Meeting' : 'Electroscope Team Shared Meeting',
+    title: meeting.subject ?? `${meeting.kind === 'personal' ? 'Personal' : 'Team shared'} meeting ${meeting.start_at ?? meeting.source_id}`,
+    description: meeting.kind === 'personal'
+      ? 'Redacted personal calendar metadata exported from Electroscope MCP.'
+      : 'Explicitly shared team meeting metadata exported from Electroscope MCP.',
+    resource: meeting.kind === 'personal'
+      ? `electroscope://calendar-event/${meeting.source_id}`
+      : `electroscope://team-shared-meeting/${meeting.source_id}`,
+    tags: normalizeList(['electroscope', 'meeting', meeting.kind, meeting.classification, meeting.meeting_lifecycle].filter(Boolean)),
+    timestamp: meeting.synced_at ?? meeting.start_at,
+    electroscope_id: meeting.source_id,
+    calendar_source: meeting.kind,
+  },
+  sections: [
+    '# Summary',
+    [
+      meeting.subject ? `Subject: ${meeting.subject}` : null,
+      meeting.start_at ? `Start: ${meeting.start_at}` : null,
+      meeting.end_at ? `End: ${meeting.end_at}` : null,
+      meeting.kind === 'personal' && meeting.show_as ? `Availability: ${meeting.show_as}` : null,
+      meeting.kind === 'personal' && meeting.response_status ? `Response status: ${meeting.response_status}` : null,
+      meeting.kind === 'personal' && meeting.attendee_count !== null && meeting.attendee_count !== undefined ? `Attendee count: ${meeting.attendee_count}` : null,
+      meeting.classification ? `Classification: ${meeting.classification}` : null,
+      meeting.meeting_lifecycle ? `Lifecycle: ${meeting.meeting_lifecycle}` : null,
+    ].filter(Boolean).join('\n\n') || 'No meeting metadata available.',
+  ],
+});
+
 const clientDocument = (client) => conceptDocument({
   meta: {
     type: 'Electroscope Client',
@@ -144,6 +174,12 @@ const buildIndex = (bundle) => [
   '',
   '## People',
   ...(bundle.people.length ? bundle.people.map((person) => `- [${person.name}](people/${person.slug}.md) - ${person.title ?? 'Electroscope person'}`) : ['- None']),
+  '',
+  '## Personal Meetings',
+  ...(bundle.personalMeetings.length ? bundle.personalMeetings.map((meeting) => `- [${meeting.subject ?? `Personal meeting ${meeting.start_at ?? meeting.source_id}`}](meetings/${meeting.slug}.md)`) : ['- None']),
+  '',
+  '## Team Shared Meetings',
+  ...(bundle.teamMeetings.length ? bundle.teamMeetings.map((meeting) => `- [${meeting.subject ?? `Team shared meeting ${meeting.start_at ?? meeting.source_id}`}](meetings/${meeting.slug}.md)`) : ['- None']),
 ].join('\n');
 
 const buildLog = (bundle) => {
@@ -152,7 +188,7 @@ const buildLog = (bundle) => {
     '# Electroscope OKF Update Log',
     '',
     `## ${date}`,
-    `- **Update**: Exported ${bundle.clients.length} clients, ${bundle.deals.length} deals, and ${bundle.people.length} people from Electroscope MCP.`,
+    `- **Update**: Exported ${bundle.clients.length} clients, ${bundle.deals.length} deals, ${bundle.people.length} people, ${bundle.personalMeetings.length} personal meetings, and ${bundle.teamMeetings.length} team shared meetings from Electroscope MCP.`,
     `- **Update**: Scope ${bundle.scope} with status snapshot clients=${bundle.status.client_count} deals=${bundle.status.deal_count}.`,
   ].join('\n');
 };
@@ -178,7 +214,17 @@ const mapUniqueNestedPeople = (people, personSlugById) => dedupeById(people).map
   slug: personSlugById.get(person.id) ?? slugify(person.name),
 }));
 
-export const normalizeBundle = ({ status, clients, deals, people, scope }) => {
+const normalizeMeetings = (meetings, kind, idKey) => assignUniqueSlugs((meetings ?? [])
+  .filter((meeting) => meeting && typeof meeting === 'object' && typeof meeting[idKey] === 'string')
+  .map((meeting) => ({
+    ...meeting,
+    id: `${kind}:${meeting[idKey]}`,
+    source_id: meeting[idKey],
+    kind,
+    name: meeting.subject ?? `${kind === 'personal' ? 'Personal' : 'Team shared'} meeting ${meeting.start_at ?? meeting[idKey]}`,
+  })));
+
+export const normalizeBundle = ({ status, clients, deals, people, personalMeetings = [], teamMeetings = [], scope }) => {
   const normalizedClients = assignUniqueSlugs(dedupeById(clients)).map((client) => ({
     ...client,
     deals: dedupeById(client.deals ?? []),
@@ -220,6 +266,8 @@ export const normalizeBundle = ({ status, clients, deals, people, scope }) => {
       related_clients: mapUniqueNestedClients(person.related_clients ?? [], clientSlugById),
       related_deals: mapUniqueNestedDeals(person.related_deals ?? [], dealSlugById, clientSlugById),
     })),
+    personalMeetings: normalizeMeetings(personalMeetings, 'personal', 'calendar_event_id'),
+    teamMeetings: normalizeMeetings(teamMeetings, 'team_shared', 'team_shared_meeting_id'),
   };
 };
 
@@ -227,6 +275,7 @@ export const writeBundle = async ({ outDir, bundle }) => {
   await fs.mkdir(path.join(outDir, 'clients'), { recursive: true });
   await fs.mkdir(path.join(outDir, 'deals'), { recursive: true });
   await fs.mkdir(path.join(outDir, 'people'), { recursive: true });
+  await fs.mkdir(path.join(outDir, 'meetings'), { recursive: true });
 
   await fs.writeFile(path.join(outDir, 'index.md'), buildIndex(bundle));
   await fs.writeFile(path.join(outDir, 'log.md'), buildLog(bundle));
@@ -241,5 +290,9 @@ export const writeBundle = async ({ outDir, bundle }) => {
 
   await Promise.all(bundle.people.map((person) =>
     fs.writeFile(path.join(outDir, 'people', `${person.slug}.md`), personDocument(person))
+  ));
+
+  await Promise.all([...bundle.personalMeetings, ...bundle.teamMeetings].map((meeting) =>
+    fs.writeFile(path.join(outDir, 'meetings', `${meeting.slug}.md`), meetingDocument(meeting))
   ));
 };

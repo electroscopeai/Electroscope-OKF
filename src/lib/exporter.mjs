@@ -6,6 +6,7 @@ const TOOL_RESULT_KEYS = {
 
 const MAX_PAGE_LIMIT = 25;
 const MAX_PAGES = 10_000;
+const MAX_CURSOR_PAGES = 10_000;
 
 const dedupeById = (items) => Array.from(new Map(
   items
@@ -110,6 +111,41 @@ export const collectSearchResults = async ({ client, toolName, query = '', scope
   }
 
   throw new Error(`Pagination exceeded ${MAX_PAGES} pages for ${toolName}.`);
+};
+
+export const collectCursorResults = async ({ client, toolName, resultKey, idKey, arguments: toolArguments, limit }) => {
+  const pageSize = resolveLimit(limit);
+  const collected = [];
+  const cursors = new Set();
+  let cursor;
+
+  for (let page = 0; page < MAX_CURSOR_PAGES; page += 1) {
+    const result = await client.callTool(toolName, {
+      ...toolArguments,
+      limit: pageSize,
+      ...(cursor ? { cursor } : {}),
+    });
+    const rows = result?.structuredContent?.[resultKey];
+    if (!Array.isArray(rows)) {
+      throw new Error(`Invalid ${toolName} response: ${resultKey} must be an array.`);
+    }
+    collected.push(...rows);
+
+    const nextCursor = result?.structuredContent?.next_cursor;
+    if (nextCursor === null || nextCursor === undefined) {
+      return Array.from(new Map(collected
+        .filter((item) => item && typeof item === 'object' && typeof item[idKey] === 'string')
+        .map((item) => [item[idKey], item]))
+        .values());
+    }
+    if (typeof nextCursor !== 'string' || nextCursor.length === 0 || cursors.has(nextCursor)) {
+      throw new Error(`Invalid ${toolName} cursor.`);
+    }
+    cursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+
+  throw new Error(`Cursor pagination exceeded ${MAX_CURSOR_PAGES} pages for ${toolName}.`);
 };
 
 export const buildDealPeopleById = (people) => {

@@ -76,6 +76,9 @@ Optional flags:
 - `--deal-query <text>` default empty
 - `--person-query <text>` default empty
 - `--limit <n>` default `25`
+- `--team-id <uuid>`, `--meeting-start-at <ISO-8601>`, and `--meeting-end-at <ISO-8601>` must be supplied together to export both the issuing user’s redacted calendar events and explicitly shared team meetings
+
+Meeting export is opt-in because it writes portable calendar metadata. It requires an MCP token with `calendar.metadata:read` and `calendar.team_availability:read` in addition to the standard read scope.
 
 ## Release workflow note
 
