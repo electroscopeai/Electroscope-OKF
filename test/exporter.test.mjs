@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDealPeopleById, collectSearchResults } from '../src/lib/exporter.mjs';
+import { buildDealPeopleById, collectCursorResults, collectSearchResults } from '../src/lib/exporter.mjs';
 
 test('collectSearchResults follows page metadata and dedupes overlapping results', async () => {
   const calls = [];
@@ -103,6 +103,31 @@ test('collectSearchResults returns the first page when pagination metadata is ab
 
   assert.equal(calls.length, 1);
   assert.equal(rows.length, 25);
+});
+
+test('collectCursorResults follows opaque cursors and dedupes calendar results', async () => {
+  const calls = [];
+  const client = {
+    async callTool(name, args) {
+      calls.push({ name, args });
+      return args.cursor
+        ? { structuredContent: { events: [{ calendar_event_id: 'event-2', subject: 'Second' }], next_cursor: null } }
+        : { structuredContent: { events: [{ calendar_event_id: 'event-1', subject: 'First' }, { calendar_event_id: 'event-2', subject: 'Second' }], next_cursor: 'opaque-cursor' } };
+    },
+  };
+
+  const rows = await collectCursorResults({
+    client,
+    toolName: 'list_my_calendar_events',
+    resultKey: 'events',
+    idKey: 'calendar_event_id',
+    arguments: { start_at: '2026-07-01T00:00:00.000Z', end_at: '2026-07-02T00:00:00.000Z' },
+    limit: 25,
+  });
+
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].args.cursor, 'opaque-cursor');
+  assert.deepEqual(rows.map((row) => row.calendar_event_id), ['event-1', 'event-2']);
 });
 
 test('buildDealPeopleById dedupes repeated people per related deal', () => {

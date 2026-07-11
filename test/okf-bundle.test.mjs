@@ -44,6 +44,22 @@ test('writeBundle writes index, log, and concept documents with cross-links', as
       related_clients: [{ id: 'client-1', name: 'Acme Corp' }],
       related_deals: [{ id: 'deal-1', name: 'Platform Renewal', deal_role: 'Decision Maker' }],
     }],
+    personalMeetings: [{
+      calendar_event_id: 'event-1',
+      subject: 'Account review',
+      start_at: '2026-07-02T12:00:00.000Z',
+      end_at: '2026-07-02T12:30:00.000Z',
+      show_as: 'busy',
+      attendee_count: 3,
+      synced_at: '2026-07-02T11:00:00.000Z',
+    }],
+    teamMeetings: [{
+      team_shared_meeting_id: 'share-1',
+      subject: 'Pipeline review',
+      classification: 'internal',
+      start_at: '2026-07-03T12:00:00.000Z',
+      end_at: '2026-07-03T12:30:00.000Z',
+    }],
   });
 
   await writeBundle({ outDir, bundle });
@@ -53,13 +69,21 @@ test('writeBundle writes index, log, and concept documents with cross-links', as
   const clientDoc = await fs.readFile(path.join(outDir, 'clients', 'acme-corp.md'), 'utf8');
   const dealDoc = await fs.readFile(path.join(outDir, 'deals', 'platform-renewal.md'), 'utf8');
   const personDoc = await fs.readFile(path.join(outDir, 'people', 'taylor-buyer.md'), 'utf8');
+  const personalMeetingDoc = await fs.readFile(path.join(outDir, 'meetings', 'account-review.md'), 'utf8');
+  const teamMeetingDoc = await fs.readFile(path.join(outDir, 'meetings', 'pipeline-review.md'), 'utf8');
 
   assert.match(index, /\[Acme Corp\]\(clients\/acme-corp.md\)/);
-  assert.match(log, /Exported 1 clients, 1 deals, and 1 people/);
+  assert.match(index, /\[Account review\]\(meetings\/account-review.md\)/);
+  assert.match(index, /\[Pipeline review\]\(meetings\/pipeline-review.md\)/);
+  assert.match(log, /1 personal meetings, and 1 team shared meetings/);
   assert.match(clientDoc, /type: "Electroscope Client"/);
   assert.match(clientDoc, /\[Platform Renewal\]\(\.\.\/deals\/platform-renewal.md\)/);
   assert.match(dealDoc, /\[Taylor Buyer\]\(\.\.\/people\/taylor-buyer.md\)/);
   assert.match(personDoc, /\[Acme Corp\]\(\.\.\/clients\/acme-corp.md\)/);
+  assert.match(personalMeetingDoc, /type: "Electroscope Personal Meeting"/);
+  assert.match(personalMeetingDoc, /Availability: busy/);
+  assert.match(teamMeetingDoc, /type: "Electroscope Team Shared Meeting"/);
+  assert.match(teamMeetingDoc, /Classification: internal/);
 });
 
 test('normalizeBundle dedupes repeated entities and preserves unique slugs for colliding names', () => {
