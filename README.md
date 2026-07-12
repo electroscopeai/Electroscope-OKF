@@ -80,6 +80,10 @@ Optional flags:
 
 Meeting export is opt-in because it writes portable calendar metadata. It requires an MCP token with `calendar.metadata:read` and `calendar.team_availability:read` in addition to the standard read scope.
 
+## MCP and OKF definition boundary
+
+See [`MCP_DEFINITIONS.md`](./MCP_DEFINITIONS.md) for the current consumer contract and the recommended boundary for future MCP-discoverable OKF definitions.
+
 ## Release workflow note
 
 When Electroscope data shapes, MCP tools, or workflow semantics change, refresh the staged OKF bundle in this repository and review the git diff before promoting `develop` to `main`.
