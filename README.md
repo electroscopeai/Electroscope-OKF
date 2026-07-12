@@ -23,6 +23,7 @@ The exporter calls Electroscope MCP read-only tools:
 - `get_deal`
 - `search_people`
 - `get_person`
+- `get_okf_definition` for the static, versioned export contract
 
 It then writes an OKF bundle with:
 - `index.md`
@@ -79,6 +80,12 @@ Optional flags:
 - `--team-id <uuid>`, `--meeting-start-at <ISO-8601>`, and `--meeting-end-at <ISO-8601>` must be supplied together to export both the issuing user’s redacted calendar events and explicitly shared team meetings
 
 Meeting export is opt-in because it writes portable calendar metadata. It requires an MCP token with `calendar.metadata:read` and `calendar.team_availability:read` in addition to the standard read scope.
+
+## MCP and OKF definition boundary
+
+The exporter must treat authenticated MCP `get_okf_definition` as the source for the static `electroscope-to-okf` mapping contract. The contract is tenant-independent and versioned; it defines supported concept types, canonical IDs and resources, provenance, visibility, and export limits without exposing a generated bundle or customer content.
+
+See [`MCP_DEFINITIONS.md`](./MCP_DEFINITIONS.md) for the current consumer contract.
 
 ## Release workflow note
 
