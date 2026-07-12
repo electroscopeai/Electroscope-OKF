@@ -23,6 +23,7 @@ The exporter calls Electroscope MCP read-only tools:
 - `get_deal`
 - `search_people`
 - `get_person`
+- `get_okf_definition` for the static, versioned export contract
 
 It then writes an OKF bundle with:
 - `index.md`
@@ -82,7 +83,9 @@ Meeting export is opt-in because it writes portable calendar metadata. It requir
 
 ## MCP and OKF definition boundary
 
-See [`MCP_DEFINITIONS.md`](./MCP_DEFINITIONS.md) for the current consumer contract and the recommended boundary for future MCP-discoverable OKF definitions.
+The exporter must treat authenticated MCP `get_okf_definition` as the source for the static `electroscope-to-okf` mapping contract. The contract is tenant-independent and versioned; it defines supported concept types, canonical IDs and resources, provenance, visibility, and export limits without exposing a generated bundle or customer content.
+
+See [`MCP_DEFINITIONS.md`](./MCP_DEFINITIONS.md) for the current consumer contract.
 
 ## Release workflow note
 
