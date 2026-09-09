@@ -2,297 +2,94 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const RESERVED_CHARACTERS = /[^a-z0-9]+/gi;
-
 const normalizeList = (items) => Array.from(new Set((items ?? []).filter(Boolean)));
-const dedupeById = (items) => Array.from(new Map((items ?? []).filter(Boolean).map((item) => [item.id, item])).values());
+const dedupeById = (items) => Array.from(new Map((items ?? []).filter((item) => item?.id).map((item) => [item.id, item])).values());
 
-export const slugify = (value) =>
-  String(value ?? '')
-    .trim()
-    .toLowerCase()
-    .replace(RESERVED_CHARACTERS, '-')
-    .replace(/^-+|-+$/g, '') || 'item';
-
-const assignUniqueSlugs = (items) => {
-  const used = new Set();
-  return items.map((item) => {
-    const baseSlug = slugify(item.name);
-    let slug = baseSlug;
-    if (used.has(slug)) {
-      slug = `${baseSlug}-${String(item.id).slice(0, 8)}`;
-    }
-    let collisionIndex = 2;
-    while (used.has(slug)) {
-      slug = `${baseSlug}-${collisionIndex}`;
-      collisionIndex += 1;
-    }
-    used.add(slug);
-    return { ...item, slug };
-  });
-};
-
-export const frontmatter = (data) => {
-  const lines = ['---'];
-  for (const [key, value] of Object.entries(data)) {
-    if (value === undefined || value === null) continue;
-    if (Array.isArray(value)) {
-      lines.push(`${key}: [${value.map((entry) => JSON.stringify(entry)).join(', ')}]`);
-      continue;
-    }
-    if (typeof value === 'object') {
-      lines.push(`${key}: ${JSON.stringify(value)}`);
-      continue;
-    }
-    lines.push(`${key}: ${JSON.stringify(value)}`);
-  }
-  lines.push('---');
-  return lines.join('\n');
-};
-
-const conceptDocument = ({ meta, sections }) =>
-  `${frontmatter(meta)}\n\n${sections.filter(Boolean).join('\n\n').trim()}\n`;
-
-const bulletLines = (items, mapItem) => (items.length ? items.map(mapItem).join('\n') : '- None');
-
-const clientDealLink = (deal) => `../deals/${deal.slug}.md`;
-const dealClientLink = (client) => `../clients/${client.slug}.md`;
-const dealPersonLink = (person) => `../people/${person.slug}.md`;
-const personClientLink = (client) => `../clients/${client.slug}.md`;
-const personDealLink = (deal) => `../deals/${deal.slug}.md`;
-
-const meetingDocument = (meeting) => conceptDocument({
-  meta: {
-    type: meeting.kind === 'personal' ? 'Electroscope Personal Meeting' : 'Electroscope Team Shared Meeting',
-    title: meeting.subject ?? `${meeting.kind === 'personal' ? 'Personal' : 'Team shared'} meeting ${meeting.start_at ?? meeting.source_id}`,
-    description: meeting.kind === 'personal'
-      ? 'Redacted personal calendar metadata exported from Electroscope MCP.'
-      : 'Explicitly shared team meeting metadata exported from Electroscope MCP.',
-    resource: meeting.kind === 'personal'
-      ? `electroscope://calendar-event/${meeting.source_id}`
-      : `electroscope://team-shared-meeting/${meeting.source_id}`,
-    tags: normalizeList(['electroscope', 'meeting', meeting.kind, meeting.classification, meeting.meeting_lifecycle].filter(Boolean)),
-    timestamp: meeting.synced_at ?? meeting.start_at,
-    electroscope_id: meeting.source_id,
-    calendar_source: meeting.kind,
-  },
-  sections: [
-    '# Summary',
-    [
-      meeting.subject ? `Subject: ${meeting.subject}` : null,
-      meeting.start_at ? `Start: ${meeting.start_at}` : null,
-      meeting.end_at ? `End: ${meeting.end_at}` : null,
-      meeting.kind === 'personal' && meeting.show_as ? `Availability: ${meeting.show_as}` : null,
-      meeting.kind === 'personal' && meeting.response_status ? `Response status: ${meeting.response_status}` : null,
-      meeting.kind === 'personal' && meeting.attendee_count !== null && meeting.attendee_count !== undefined ? `Attendee count: ${meeting.attendee_count}` : null,
-      meeting.classification ? `Classification: ${meeting.classification}` : null,
-      meeting.meeting_lifecycle ? `Lifecycle: ${meeting.meeting_lifecycle}` : null,
-    ].filter(Boolean).join('\n\n') || 'No meeting metadata available.',
-  ],
+export const slugify = (value) => String(value ?? '').trim().toLowerCase().replace(RESERVED_CHARACTERS, '-').replace(/^-+|-+$/g, '') || 'item';
+const assignUniqueSlugs = (items, used = new Set()) => items.map((item) => {
+  const base = slugify(item.name);
+  let slug = base;
+  if (used.has(slug)) slug = `${base}-${String(item.id).slice(0, 8)}`;
+  let index = 2;
+  while (used.has(slug)) { slug = `${base}-${index}`; index += 1; }
+  used.add(slug);
+  return { ...item, slug };
 });
 
-const clientDocument = (client) => conceptDocument({
-  meta: {
-    type: 'Electroscope Client',
-    title: client.name,
-    description: client.description ?? `Electroscope client account ${client.name}`,
-    resource: `electroscope://client/${client.id}`,
-    tags: normalizeList(['electroscope', 'client', client.industry].filter(Boolean)),
-    timestamp: client.updated_at ?? client.created_at,
-    electroscope_id: client.id,
-  },
-  sections: [
-    '# Summary',
-    [
-      client.description,
-      client.industry ? `Industry: ${client.industry}` : null,
-      client.headquarters ? `Headquarters: ${client.headquarters}` : null,
-      client.website_domain ? `Website: ${client.website_domain}` : null,
-    ].filter(Boolean).join('\n\n') || 'No summary available.',
-    '# Related Deals',
-    bulletLines(client.deals ?? [], (deal) => `- [${deal.name}](${clientDealLink(deal)})${deal.stage?.name ? ` - ${deal.stage.name}` : ''}`),
-  ],
-});
+export const frontmatter = (data) => ['---', ...Object.entries(data).flatMap(([key, value]) => {
+  if (value === undefined || value === null) return [];
+  return Array.isArray(value) ? `${key}: [${value.map((entry) => JSON.stringify(entry)).join(', ')}]` : `${key}: ${JSON.stringify(value)}`;
+}), '---'].join('\n');
+const document = (meta, sections) => `${frontmatter(meta)}\n\n${sections.filter(Boolean).join('\n\n').trim()}\n`;
+const bullets = (items, render) => items.length ? items.map(render).join('\n') : '- None';
+const safeText = (value) => typeof value === 'string' && value.length ? value : null;
+const provenance = (record) => ({ contract_version: record.contractVersion, export_scope: record.scope, mcp_authorization_scope: 'read_only', exported_at: record.exportedAt });
+const link = (label, href) => href ? `[${label}](${href})` : label;
+const linkFor = (directory, record) => record?.slug ? `../${directory}/${record.slug}.md` : null;
+const workspaceProvenance = (item) => item?.provenance ? [`Canonical entity ID: ${item.provenance.canonical_entity_id ?? 'unavailable'}`, item.provenance.canonical_key && `Canonical key: ${item.provenance.canonical_key}`, item.provenance.updated_at && `Updated at: ${item.provenance.updated_at}`, item.provenance.accepted_at && `Accepted at: ${item.provenance.accepted_at}`, Array.isArray(item.provenance.source_document_ids) && `Source document IDs: ${item.provenance.source_document_ids.join(', ')}`].filter(Boolean).join('; ') : 'No provenance available.';
 
-const dealDocument = (deal) => conceptDocument({
-  meta: {
-    type: 'Electroscope Deal',
-    title: deal.name,
-    description: deal.status_brief ?? `Electroscope deal ${deal.name}`,
-    resource: `electroscope://deal/${deal.id}`,
-    tags: normalizeList(['electroscope', 'deal', deal.stage?.name, deal.client?.name].filter(Boolean)),
-    timestamp: deal.updated_at ?? deal.created_at,
-    electroscope_id: deal.id,
-  },
-  sections: [
-    '# Summary',
-    [
-      deal.client ? `Client: [${deal.client.name}](${dealClientLink(deal.client)})` : null,
-      deal.stage?.name ? `Stage: ${deal.stage.name}` : null,
-      deal.status_brief ? `Status: ${deal.status_brief}` : null,
-      deal.next_steps ? `Next steps: ${deal.next_steps}` : null,
-      deal.revenue !== null && deal.revenue !== undefined ? `Revenue: ${deal.revenue}` : null,
-    ].filter(Boolean).join('\n\n') || 'No summary available.',
-    '# Related People',
-    bulletLines(deal.people ?? [], (person) => `- [${person.name}](${dealPersonLink(person)})${person.deal_role ? ` - ${person.deal_role}` : ''}`),
-  ],
-});
+const clientDocument = (client) => document({ type: 'Electroscope Client', title: client.name, description: client.description ?? `Electroscope client account ${client.name}`, resource: `electroscope://client/${client.id}`, tags: normalizeList(['electroscope', 'client', client.industry]), timestamp: client.updated_at ?? client.created_at, electroscope_id: client.id, ...provenance(client) }, [
+  '# Summary', [client.description, client.industry && `Industry: ${client.industry}`, client.headquarters && `Headquarters: ${client.headquarters}`, client.website_domain && `Website: ${client.website_domain}`].filter(Boolean).join('\n\n') || 'No summary available.',
+  '# Related Deals', bullets(client.deals, (deal) => `- ${link(deal.name, linkFor('deals', deal))}${deal.stage?.name ? ` - ${deal.stage.name}` : ''}`),
+  '# Meeting Knowledge', bullets(client.meetings, (meeting) => `- [${meeting.name}](../meetings/${meeting.slug}.md)`),
+  '# Workspace', client.workspace ? `[Client workspace](../client-workspaces/${client.workspace.slug}.md)` : 'No client workspace exported.',
+]);
+const dealDocument = (deal) => document({ type: 'Electroscope Deal', title: deal.name, description: deal.status_brief ?? `Electroscope deal ${deal.name}`, resource: `electroscope://deal/${deal.id}`, tags: normalizeList(['electroscope', 'deal', deal.stage?.name, deal.client?.name]), timestamp: deal.updated_at ?? deal.created_at, electroscope_id: deal.id, ...provenance(deal) }, [
+  '# Summary', [deal.client && `Client: ${link(deal.client.name, linkFor('clients', deal.client))}`, deal.stage?.name && `Stage: ${deal.stage.name}`, deal.status_brief && `Status: ${deal.status_brief}`, deal.next_steps && `Next steps: ${deal.next_steps}`, deal.revenue != null && `Revenue: ${deal.revenue}`].filter(Boolean).join('\n\n') || 'No summary available.',
+  '# Related People', bullets(deal.people, (person) => `- ${link(person.name, linkFor('people', person))}${person.deal_role ? ` - ${person.deal_role}` : ''}`),
+  '# Workspace', deal.workspace ? `[Deal workspace](../deal-workspaces/${deal.workspace.slug}.md)` : 'No deal workspace exported.',
+]);
+const personDocument = (person) => document({ type: 'Electroscope Person', title: person.name, description: person.title ?? `Electroscope person ${person.name}`, resource: `electroscope://person/${person.id}`, tags: normalizeList(['electroscope', 'person', person.department, person.seniority_level]), timestamp: person.updated_at ?? person.exportedAt, electroscope_id: person.id, ...provenance(person) }, [
+  '# Summary', [person.title && `Title: ${person.title}`, person.email && `Email: ${person.email}`, person.current_client && `Current client: ${link(person.current_client.name, linkFor('clients', person.current_client))}`, person.communication_style && `Communication style: ${person.communication_style}`, person.budget_authority && `Budget authority: ${person.budget_authority}`].filter(Boolean).join('\n\n') || 'No summary available.',
+  '# Related Clients', bullets(person.related_clients, (client) => `- ${link(client.name, linkFor('clients', client))}`),
+  '# Related Deals', bullets(person.related_deals, (deal) => `- ${link(deal.name, linkFor('deals', deal))}${deal.deal_role ? ` - ${deal.deal_role}` : ''}`),
+]);
+const meetingDocument = (meeting) => document({ type: meeting.kind === 'personal' ? 'Electroscope Personal Meeting' : 'Electroscope Team Shared Meeting', title: meeting.subject ?? meeting.name, description: meeting.kind === 'personal' ? 'Redacted personal calendar metadata exported from Electroscope MCP.' : 'Explicitly shared team meeting metadata exported from Electroscope MCP.', resource: meeting.kind === 'personal' ? `electroscope://calendar-event/${meeting.source_id}` : `electroscope://team-shared-meeting/${meeting.source_id}`, tags: normalizeList(['electroscope', 'meeting', meeting.kind, meeting.classification, meeting.meeting_lifecycle]), timestamp: meeting.synced_at ?? meeting.start_at, electroscope_id: meeting.source_id, calendar_source: meeting.kind, ...provenance(meeting), mcp_authorization_scope: meeting.kind === 'personal' ? 'calendar.metadata:read' : 'calendar.team_availability:read' }, ['# Summary', [meeting.subject && `Subject: ${meeting.subject}`, meeting.start_at && `Start: ${meeting.start_at}`, meeting.end_at && `End: ${meeting.end_at}`, meeting.kind === 'personal' && meeting.show_as && `Availability: ${meeting.show_as}`, meeting.kind === 'personal' && meeting.attendee_count != null && `Attendee count: ${meeting.attendee_count}`, meeting.classification && `Classification: ${meeting.classification}`, meeting.meeting_lifecycle && `Lifecycle: ${meeting.meeting_lifecycle}`].filter(Boolean).join('\n\n') || 'No meeting metadata available.']);
+const canonicalMeetingDocument = (meeting) => document({ type: 'Electroscope Canonical Client Meeting', title: meeting.subject ?? meeting.name, description: 'Persisted canonical meeting summary exported from Electroscope MCP.', resource: `electroscope://client/${meeting.client_id}/meeting/${meeting.canonical_meeting_id}`, tags: ['electroscope', 'client-meeting', 'canonical-summary'], timestamp: meeting.generated_at ?? meeting.started_at, electroscope_id: meeting.canonical_meeting_id, client_id: meeting.client_id, deal_id: meeting.deal_id, source_fingerprint: meeting.person_resolution_fingerprint, ...provenance(meeting) }, ['# Summary', [meeting.client && `Client: ${link(meeting.client.name, linkFor('clients', meeting.client))}`, meeting.subject && `Subject: ${meeting.subject}`, meeting.started_at && `Start: ${meeting.started_at}`, meeting.canonical_summary?.rendered?.purpose && `Purpose: ${meeting.canonical_summary.rendered.purpose}`].filter(Boolean).join('\n\n') || 'No summary available.', '# Key Points', bullets(meeting.canonical_summary?.rendered?.key_points ?? [], (point) => `- ${point}`), '# Action Items', bullets(meeting.canonical_summary?.rendered?.action_items ?? [], (item) => `- ${item}`), '# Provenance', [meeting.authority && `Authority: ${meeting.authority}`, meeting.generated_at && `Generated at: ${meeting.generated_at}`, meeting.prompt_version && `Prompt version: ${meeting.prompt_version}`, meeting.person_resolution_fingerprint && `Person resolution fingerprint: ${meeting.person_resolution_fingerprint}`].filter(Boolean).join('\n\n') || 'No provenance available.']);
+const upcomingDocument = (meeting) => document({ type: 'Electroscope Upcoming Client Meeting Context', title: meeting.subject ?? meeting.name, description: 'Owner-authorized, persisted upcoming client meeting context exported from Electroscope MCP.', resource: `electroscope://client/${meeting.client_id}/upcoming-meeting/${meeting.upcoming_meeting_id}`, tags: normalizeList(['electroscope', 'client-meeting', 'upcoming', meeting.meeting_lifecycle]), timestamp: meeting.start_at, electroscope_id: meeting.upcoming_meeting_id, client_id: meeting.client_id, canonical_meeting_id: meeting.canonical_meeting_id, deal_id: meeting.deal_id, ...provenance(meeting) }, ['# Summary', [meeting.client && `Client: ${link(meeting.client.name, linkFor('clients', meeting.client))}`, meeting.subject && `Subject: ${meeting.subject}`, meeting.start_at && `Start: ${meeting.start_at}`, meeting.end_at && `End: ${meeting.end_at}`, meeting.match_confidence && `Match confidence: ${meeting.match_confidence}`, meeting.meeting_audience && `Audience: ${meeting.meeting_audience}`, meeting.meeting_state && `State: ${meeting.meeting_state}`, meeting.prep_status && `Preparation status: ${meeting.prep_status}`, meeting.business_context && `Business context: ${meeting.business_context}`, meeting.meeting_lifecycle && `Lifecycle: ${meeting.meeting_lifecycle}`, typeof meeting.needs_attention === 'boolean' && `Needs attention: ${meeting.needs_attention}`].filter(Boolean).join('\n\n') || 'No upcoming meeting context available.']);
+const preparationDocument = (prep) => document({ type: 'Electroscope Client Meeting Preparation', title: prep.name, description: 'Persisted client Meeting Prep exported only when MCP confirms active canonical meeting-set validity.', resource: `electroscope://client/${prep.client_id}/meeting-preparation`, tags: ['electroscope', 'meeting-preparation'], timestamp: prep.generated_at, electroscope_id: prep.id, client_id: prep.client_id, source_fingerprint: prep.source_fingerprint, latest_meeting_id: prep.latest_meeting_id, ...provenance(prep) }, ['# Summary', [prep.client && `Client: ${link(prep.client.name, linkFor('clients', prep.client))}`, prep.summary?.rendered?.purpose && `Purpose: ${prep.summary.rendered.purpose}`].filter(Boolean).join('\n\n') || 'No preparation summary available.', '# Key Points', bullets(prep.summary?.rendered?.key_points ?? [], (point) => `- ${point}`), '# Action Items', bullets(prep.summary?.rendered?.action_items ?? [], (item) => `- ${item}`), '# Validity and Provenance', [prep.validity_status && `Validity: ${prep.validity_status}`, prep.generated_at && `Generated at: ${prep.generated_at}`, prep.prompt_version && `Prompt version: ${prep.prompt_version}`, prep.source_fingerprint && `Source fingerprint: ${prep.source_fingerprint}`, prep.latest_meeting_id && `Latest canonical meeting ID: ${prep.latest_meeting_id}`].filter(Boolean).join('\n\n') || 'No provenance available.']);
+const teamDocument = (team) => document({ type: 'Electroscope Team', title: team.name, description: 'Active team accessible to the issuing Electroscope MCP token.', resource: `electroscope://team/${team.id}`, tags: ['electroscope', 'team'], timestamp: team.exportedAt, electroscope_id: team.id, ...provenance(team) }, ['# Team', `Name: ${team.name}`, '# Action Item Index', team.actionIndex ? `[Team action-item index](../team-action-items/${team.actionIndex.slug}.md)` : 'No team action-item index exported.']);
+const dealWorkspaceDocument = (workspace) => document({ type: 'Electroscope Deal Workspace', title: `Deal workspace: ${workspace.deal.name}`, description: 'Bounded canonical deal workspace projection.', resource: `electroscope://deal/${workspace.deal.id}/workspace`, tags: ['electroscope', 'deal-workspace'], timestamp: workspace.timestamp, electroscope_id: workspace.deal.id, ...provenance(workspace) }, ['# Deal', link(workspace.deal.name, linkFor('deals', workspace.deal)), '# Milestone Provenance', bullets(workspace.milestones, (item) => `- ${workspaceProvenance(item)}`), '# Action Items', bullets(workspace.action_items, (item) => `- ${safeText(item.title) ?? 'Untitled'}${item.due_date ? ` (due ${item.due_date})` : ''}; status: ${item.status ?? item.state ?? 'unavailable'}; ${workspaceProvenance(item)}`), '# Risk Provenance', bullets(workspace.risks, (item) => `- ${workspaceProvenance(item)}`)]);
+const clientWorkspaceDocument = (workspace) => document({ type: 'Electroscope Client Workspace', title: `Client workspace: ${workspace.client_name}`, description: 'Bounded canonical client workspace projection without attribution snippets.', resource: `electroscope://client/${workspace.client_id}/workspace`, tags: ['electroscope', 'client-workspace'], timestamp: workspace.exportedAt, electroscope_id: workspace.client_id, provenance_source: workspace.provenance?.source, attribution_snippets_included: false, ...provenance(workspace) }, ['# Client', link(workspace.client_name, linkFor('clients', workspace.client)), '# Risks', bullets(workspace.risks, (risk) => `- ${risk.risk ?? 'Unnamed risk'}${risk.likelihood ? `; likelihood: ${risk.likelihood}` : ''}${risk.impact ? `; impact: ${risk.impact}` : ''}${risk.mitigation ? `; mitigation: ${risk.mitigation}` : ''}${risk.owner?.name ? `; owner: ${risk.owner.name}` : ''}`), '# Initiatives', bullets(workspace.initiatives, (initiative) => `- ${initiative.name ?? 'Unnamed initiative'}${initiative.timeline ? `; timeline: ${initiative.timeline}` : ''}${initiative.owner?.personId ? `; owner ID: ${initiative.owner.personId}` : ''}${initiative.owner?.personKey ? `; owner key: ${initiative.owner.personKey}` : ''}${initiative.owner?.title ? `; owner title: ${initiative.owner.title}` : ''}`)]);
+const actionIndexDocument = (index) => document({ type: 'Electroscope Team Action Item Index', title: `Team action-item index: ${index.team.name}`, description: 'Bounded team action-item index from canonical read models.', resource: `electroscope://team/${index.team_id}/action-items`, tags: ['electroscope', 'team-action-items'], timestamp: index.exportedAt, electroscope_id: index.team_id, ...provenance(index) }, ['# Team', link(index.team.name, linkFor('teams', index.team)), '# Action Items', bullets(index.action_items, (item) => `- ${link(item.title ?? 'Untitled', item.deal ? linkFor('deals', item.deal) : null)}${item.due_date ? ` (due ${item.due_date})` : ''}; status: ${item.status ?? item.state ?? 'unavailable'}; ${workspaceProvenance(item)}`)]);
 
-const personDocument = (person) => conceptDocument({
-  meta: {
-    type: 'Electroscope Person',
-    title: person.name,
-    description: person.title ?? `Electroscope person ${person.name}`,
-    resource: `electroscope://person/${person.id}`,
-    tags: normalizeList(['electroscope', 'person', person.department, person.seniority_level].filter(Boolean)),
-    timestamp: person.updated_at ?? new Date().toISOString(),
-    electroscope_id: person.id,
-  },
-  sections: [
-    '# Summary',
-    [
-      person.title ? `Title: ${person.title}` : null,
-      person.email ? `Email: ${person.email}` : null,
-      person.current_client ? `Current client: [${person.current_client.name}](${personClientLink(person.current_client)})` : null,
-      person.communication_style ? `Communication style: ${person.communication_style}` : null,
-      person.budget_authority ? `Budget authority: ${person.budget_authority}` : null,
-    ].filter(Boolean).join('\n\n') || 'No summary available.',
-    '# Related Clients',
-    bulletLines(person.related_clients ?? [], (client) => `- [${client.name}](${personClientLink(client)})`),
-    '# Related Deals',
-    bulletLines(person.related_deals ?? [], (deal) => `- [${deal.name}](${personDealLink(deal)})${deal.deal_role ? ` - ${deal.deal_role}` : ''}`),
-  ],
-});
+const indexLines = (title, records, directory, describe = (record) => record.name) => [`## ${title}`, ...(records.length ? records.map((record) => `- [${describe(record)}](${directory}/${record.slug}.md)`) : ['- None']), ''];
+const buildIndex = (bundle) => ['# Electroscope OKF Bundle', '', `Contract: ${bundle.contract.contractName} ${bundle.contract.contractVersion}`, `Export scope: ${bundle.scope}`, `Exported at: ${bundle.exportedAt}`, '', ...indexLines('Clients', bundle.clients, 'clients'), ...indexLines('Deals', bundle.deals, 'deals'), ...indexLines('People', bundle.people, 'people'), ...indexLines('Teams', bundle.teams, 'teams'), ...indexLines('Deal Workspaces', bundle.dealWorkspaces, 'deal-workspaces'), ...indexLines('Client Workspaces', bundle.clientWorkspaces, 'client-workspaces'), ...indexLines('Team Action-Item Indexes', bundle.teamActionItemIndexes, 'team-action-items'), ...indexLines('Canonical Client Meeting Summaries', bundle.canonicalMeetings, 'meetings'), ...indexLines('Upcoming Client Meeting Context', bundle.upcomingClientMeetings, 'meetings'), ...indexLines('Client Meeting Preparation', bundle.meetingPreparations, 'meetings'), ...indexLines('Personal Meetings', bundle.personalMeetings, 'meetings', (meeting) => meeting.subject ?? meeting.name), ...indexLines('Team Shared Meetings', bundle.teamMeetings, 'meetings', (meeting) => meeting.subject ?? meeting.name)].join('\n');
+const buildLog = (bundle) => ['# Electroscope OKF Update Log', '', `## ${bundle.exportedAt.slice(0, 10)}`, `- **Update**: Contract ${bundle.contract.contractName} ${bundle.contract.contractVersion}; scope ${bundle.scope}.`, `- **Update**: Exported ${bundle.clients.length} clients, ${bundle.deals.length} deals, ${bundle.people.length} people, ${bundle.teams.length} teams, ${bundle.dealWorkspaces.length} deal workspaces, ${bundle.clientWorkspaces.length} client workspaces, ${bundle.teamActionItemIndexes.length} team action-item indexes, ${bundle.canonicalMeetings.length} canonical client meeting summaries, ${bundle.upcomingClientMeetings.length} upcoming client meeting contexts, ${bundle.meetingPreparations.length} Meeting Prep records, ${bundle.personalMeetings.length} personal meetings, and ${bundle.teamMeetings.length} team shared meetings.`, '- **Boundary**: Raw transcripts, calendar bodies, attendees, joins, source snapshots, raw document content, action-item notes, and attribution snippets are excluded.'].join('\n');
 
-const buildIndex = (bundle) => [
-  '# Electroscope OKF Bundle',
-  '',
-  '## Clients',
-  ...(bundle.clients.length ? bundle.clients.map((client) => `- [${client.name}](clients/${client.slug}.md) - ${client.description ?? 'Electroscope client account'}`) : ['- None']),
-  '',
-  '## Deals',
-  ...(bundle.deals.length ? bundle.deals.map((deal) => `- [${deal.name}](deals/${deal.slug}.md) - ${deal.status_brief ?? 'Electroscope deal'}`) : ['- None']),
-  '',
-  '## People',
-  ...(bundle.people.length ? bundle.people.map((person) => `- [${person.name}](people/${person.slug}.md) - ${person.title ?? 'Electroscope person'}`) : ['- None']),
-  '',
-  '## Personal Meetings',
-  ...(bundle.personalMeetings.length ? bundle.personalMeetings.map((meeting) => `- [${meeting.subject ?? `Personal meeting ${meeting.start_at ?? meeting.source_id}`}](meetings/${meeting.slug}.md)`) : ['- None']),
-  '',
-  '## Team Shared Meetings',
-  ...(bundle.teamMeetings.length ? bundle.teamMeetings.map((meeting) => `- [${meeting.subject ?? `Team shared meeting ${meeting.start_at ?? meeting.source_id}`}](meetings/${meeting.slug}.md)`) : ['- None']),
-].join('\n');
-
-const buildLog = (bundle) => {
-  const date = new Date().toISOString().slice(0, 10);
-  return [
-    '# Electroscope OKF Update Log',
-    '',
-    `## ${date}`,
-    `- **Update**: Exported ${bundle.clients.length} clients, ${bundle.deals.length} deals, ${bundle.people.length} people, ${bundle.personalMeetings.length} personal meetings, and ${bundle.teamMeetings.length} team shared meetings from Electroscope MCP.`,
-    `- **Update**: Scope ${bundle.scope} with status snapshot clients=${bundle.status.client_count} deals=${bundle.status.deal_count}.`,
-  ].join('\n');
-};
-
-const mapUniqueNestedClients = (clients, clientSlugById) => dedupeById(clients).map((client) => ({
-  ...client,
-  slug: clientSlugById.get(client.id) ?? slugify(client.name),
-}));
-
-const mapUniqueNestedDeals = (deals, dealSlugById, clientSlugById) => dedupeById(deals).map((deal) => ({
-  ...deal,
-  slug: dealSlugById.get(deal.id) ?? slugify(deal.name),
-  client: deal.client
-    ? {
-        ...deal.client,
-        slug: clientSlugById.get(deal.client.id) ?? slugify(deal.client.name),
-      }
-    : null,
-}));
-
-const mapUniqueNestedPeople = (people, personSlugById) => dedupeById(people).map((person) => ({
-  ...person,
-  slug: personSlugById.get(person.id) ?? slugify(person.name),
-}));
-
-const normalizeMeetings = (meetings, kind, idKey) => assignUniqueSlugs((meetings ?? [])
-  .filter((meeting) => meeting && typeof meeting === 'object' && typeof meeting[idKey] === 'string')
-  .map((meeting) => ({
-    ...meeting,
-    id: `${kind}:${meeting[idKey]}`,
-    source_id: meeting[idKey],
-    kind,
-    name: meeting.subject ?? `${kind === 'personal' ? 'Personal' : 'Team shared'} meeting ${meeting.start_at ?? meeting[idKey]}`,
-  })));
-
-export const normalizeBundle = ({ status, clients, deals, people, personalMeetings = [], teamMeetings = [], scope }) => {
-  const normalizedClients = assignUniqueSlugs(dedupeById(clients)).map((client) => ({
-    ...client,
-    deals: dedupeById(client.deals ?? []),
-  }));
-  const clientSlugById = new Map(normalizedClients.map((client) => [client.id, client.slug]));
-
-  const normalizedDeals = assignUniqueSlugs(dedupeById(deals)).map((deal) => ({
-    ...deal,
-    client: deal.client
-      ? { ...deal.client, slug: clientSlugById.get(deal.client.id) ?? slugify(deal.client.name) }
-      : null,
-    people: dedupeById(deal.people ?? []),
-  }));
-  const dealSlugById = new Map(normalizedDeals.map((deal) => [deal.id, deal.slug]));
-
-  const normalizedPeople = assignUniqueSlugs(dedupeById(people)).map((person) => ({
-    ...person,
-    current_client: person.current_client
-      ? { ...person.current_client, slug: clientSlugById.get(person.current_client.id) ?? slugify(person.current_client.name) }
-      : null,
-    related_clients: dedupeById(person.related_clients ?? []),
-    related_deals: dedupeById(person.related_deals ?? []),
-  }));
-  const personSlugById = new Map(normalizedPeople.map((person) => [person.id, person.slug]));
-
-  return {
-    scope,
-    status,
-    clients: normalizedClients.map((client) => ({
-      ...client,
-      deals: mapUniqueNestedDeals(client.deals ?? [], dealSlugById, clientSlugById),
-    })),
-    deals: normalizedDeals.map((deal) => ({
-      ...deal,
-      people: mapUniqueNestedPeople(deal.people ?? [], personSlugById),
-    })),
-    people: normalizedPeople.map((person) => ({
-      ...person,
-      related_clients: mapUniqueNestedClients(person.related_clients ?? [], clientSlugById),
-      related_deals: mapUniqueNestedDeals(person.related_deals ?? [], dealSlugById, clientSlugById),
-    })),
-    personalMeetings: normalizeMeetings(personalMeetings, 'personal', 'calendar_event_id'),
-    teamMeetings: normalizeMeetings(teamMeetings, 'team_shared', 'team_shared_meeting_id'),
-  };
+export const normalizeBundle = ({ status, clients = [], deals = [], people = [], teams = [], personalMeetings = [], teamMeetings = [], canonicalMeetings = [], upcomingClientMeetings = [], meetingPreparations = [], dealWorkspaces = [], clientWorkspaces = [], teamActionItemIndexes = [], scope, contract = { contractName: 'electroscope-to-okf', contractVersion: 'unknown' }, exportedAt = new Date().toISOString() }) => {
+  const context = { scope, contractVersion: contract.contractVersion, exportedAt };
+  const normalizedClients = assignUniqueSlugs(dedupeById(clients)).map((client) => ({ ...client, ...context }));
+  const clientById = new Map(normalizedClients.map((client) => [client.id, client]));
+  const normalizedDeals = assignUniqueSlugs(dedupeById(deals)).map((deal) => ({ ...deal, ...context, client: clientById.get(deal.client?.id) ?? null }));
+  const dealById = new Map(normalizedDeals.map((deal) => [deal.id, deal]));
+  const normalizedPeople = assignUniqueSlugs(dedupeById(people)).map((person) => ({ ...person, ...context, current_client: clientById.get(person.current_client?.id) ?? null, related_clients: dedupeById(person.related_clients).map((client) => clientById.get(client.id)).filter(Boolean), related_deals: dedupeById(person.related_deals).map((deal) => dealById.get(deal.id)).filter(Boolean) }));
+  const personById = new Map(normalizedPeople.map((person) => [person.id, person]));
+  normalizedClients.forEach((client) => { client.deals = dedupeById(client.deals).map((deal) => dealById.get(deal.id)).filter(Boolean); });
+  normalizedDeals.forEach((deal) => { deal.people = dedupeById(deal.people).map((person) => personById.get(person.id)).filter(Boolean); });
+  const normalizeClientKnowledge = (records, kind, idFor, nameFor) => (records ?? []).filter((record) => record && typeof idFor(record) === 'string').map((record) => ({ ...record, ...context, id: `${kind}:${idFor(record)}`, source_id: idFor(record), kind, name: nameFor(record), client: clientById.get(record.client_id) ?? null }));
+  const canonical = normalizeClientKnowledge(canonicalMeetings, 'canonical-meeting', (record) => record.meeting?.canonical_meeting_id, (record) => record.meeting?.subject ?? `Canonical client meeting ${record.meeting?.canonical_meeting_id}`).map((record) => ({ ...record, ...record.meeting, ...record.provenance, canonical_summary: record.canonical_summary, authority: record.provenance?.authority }));
+  const upcoming = normalizeClientKnowledge(upcomingClientMeetings, 'upcoming-client-meeting', (record) => record.upcoming_meeting_id, (record) => record.subject ?? `Upcoming client meeting ${record.upcoming_meeting_id}`);
+  const preparations = normalizeClientKnowledge(meetingPreparations, 'meeting-preparation', (record) => record.preparation?.id, (record) => `Meeting preparation for ${clientById.get(record.client_id)?.name ?? record.client_id}`).map((record) => ({ ...record, ...record.preparation, validity_status: record.validity?.status }));
+  const calendar = (items, kind, idKey) => (items ?? []).filter((item) => item && typeof item[idKey] === 'string').map((item) => ({ ...item, ...context, id: `${kind}:${item[idKey]}`, source_id: item[idKey], kind, name: item.subject ?? `${kind === 'personal' ? 'Personal' : 'Team shared'} meeting ${item.start_at ?? item[idKey]}` }));
+  const meetings = assignUniqueSlugs([...canonical, ...upcoming, ...preparations, ...calendar(personalMeetings, 'personal', 'calendar_event_id'), ...calendar(teamMeetings, 'team_shared', 'team_shared_meeting_id')]);
+  const byKind = (kind) => meetings.filter((item) => item.kind === kind);
+  const normalizedTeams = assignUniqueSlugs(dedupeById(teams)).map((team) => ({ ...team, ...context }));
+  const teamById = new Map(normalizedTeams.map((team) => [team.id, team]));
+  const normalizedDealWorkspaces = assignUniqueSlugs((dealWorkspaces ?? []).filter((workspace) => dealById.has(workspace?.deal?.id)).map((workspace) => ({ ...workspace, ...context, id: `deal-workspace:${workspace.deal.id}`, name: `Deal workspace ${workspace.deal.name}`, deal: dealById.get(workspace.deal.id), timestamp: workspace.action_items?.find((item) => item.updated_at)?.updated_at ?? exportedAt })));
+  const dealWorkspaceById = new Map(normalizedDealWorkspaces.map((workspace) => [workspace.deal.id, workspace]));
+  const normalizedClientWorkspaces = assignUniqueSlugs((clientWorkspaces ?? []).filter((workspace) => clientById.has(workspace?.client_id)).map((workspace) => ({ ...workspace, ...context, id: `client-workspace:${workspace.client_id}`, name: `Client workspace ${workspace.client_name ?? clientById.get(workspace.client_id).name}`, client: clientById.get(workspace.client_id) })));
+  const clientWorkspaceById = new Map(normalizedClientWorkspaces.map((workspace) => [workspace.client_id, workspace]));
+  const normalizedIndexes = assignUniqueSlugs((teamActionItemIndexes ?? []).filter((index) => teamById.has(index?.team_id)).map((index) => ({ ...index, ...context, id: `team-action-items:${index.team_id}`, name: `Team action items ${teamById.get(index.team_id).name}`, team: teamById.get(index.team_id), action_items: (index.action_items ?? []).filter((item) => item?.id).map((item) => ({ ...item, deal: dealById.get(item.deal_id) ?? null })) })));
+  const indexByTeamId = new Map(normalizedIndexes.map((index) => [index.team_id, index]));
+  normalizedClients.forEach((client) => { client.meetings = meetings.filter((meeting) => meeting.client_id === client.id); client.workspace = clientWorkspaceById.get(client.id) ?? null; });
+  normalizedDeals.forEach((deal) => { deal.workspace = dealWorkspaceById.get(deal.id) ?? null; });
+  normalizedTeams.forEach((team) => { team.actionIndex = indexByTeamId.get(team.id) ?? null; });
+  return { scope, contract, exportedAt, status, clients: normalizedClients, deals: normalizedDeals, people: normalizedPeople, teams: normalizedTeams, dealWorkspaces: normalizedDealWorkspaces, clientWorkspaces: normalizedClientWorkspaces, teamActionItemIndexes: normalizedIndexes, canonicalMeetings: byKind('canonical-meeting'), upcomingClientMeetings: byKind('upcoming-client-meeting'), meetingPreparations: byKind('meeting-preparation'), personalMeetings: byKind('personal'), teamMeetings: byKind('team_shared') };
 };
 
 export const writeBundle = async ({ outDir, bundle }) => {
-  await fs.mkdir(path.join(outDir, 'clients'), { recursive: true });
-  await fs.mkdir(path.join(outDir, 'deals'), { recursive: true });
-  await fs.mkdir(path.join(outDir, 'people'), { recursive: true });
-  await fs.mkdir(path.join(outDir, 'meetings'), { recursive: true });
-
-  await fs.writeFile(path.join(outDir, 'index.md'), buildIndex(bundle));
-  await fs.writeFile(path.join(outDir, 'log.md'), buildLog(bundle));
-
-  await Promise.all(bundle.clients.map((client) =>
-    fs.writeFile(path.join(outDir, 'clients', `${client.slug}.md`), clientDocument(client))
-  ));
-
-  await Promise.all(bundle.deals.map((deal) =>
-    fs.writeFile(path.join(outDir, 'deals', `${deal.slug}.md`), dealDocument(deal))
-  ));
-
-  await Promise.all(bundle.people.map((person) =>
-    fs.writeFile(path.join(outDir, 'people', `${person.slug}.md`), personDocument(person))
-  ));
-
-  await Promise.all([...bundle.personalMeetings, ...bundle.teamMeetings].map((meeting) =>
-    fs.writeFile(path.join(outDir, 'meetings', `${meeting.slug}.md`), meetingDocument(meeting))
-  ));
+  const directories = ['clients', 'deals', 'people', 'teams', 'deal-workspaces', 'client-workspaces', 'team-action-items', 'meetings'];
+  await Promise.all(directories.map((directory) => fs.mkdir(path.join(outDir, directory), { recursive: true })));
+  await Promise.all([fs.writeFile(path.join(outDir, 'index.md'), buildIndex(bundle)), fs.writeFile(path.join(outDir, 'log.md'), buildLog(bundle)), ...bundle.clients.map((item) => fs.writeFile(path.join(outDir, 'clients', `${item.slug}.md`), clientDocument(item))), ...bundle.deals.map((item) => fs.writeFile(path.join(outDir, 'deals', `${item.slug}.md`), dealDocument(item))), ...bundle.people.map((item) => fs.writeFile(path.join(outDir, 'people', `${item.slug}.md`), personDocument(item))), ...bundle.teams.map((item) => fs.writeFile(path.join(outDir, 'teams', `${item.slug}.md`), teamDocument(item))), ...bundle.dealWorkspaces.map((item) => fs.writeFile(path.join(outDir, 'deal-workspaces', `${item.slug}.md`), dealWorkspaceDocument(item))), ...bundle.clientWorkspaces.map((item) => fs.writeFile(path.join(outDir, 'client-workspaces', `${item.slug}.md`), clientWorkspaceDocument(item))), ...bundle.teamActionItemIndexes.map((item) => fs.writeFile(path.join(outDir, 'team-action-items', `${item.slug}.md`), actionIndexDocument(item))), ...bundle.personalMeetings.map((item) => fs.writeFile(path.join(outDir, 'meetings', `${item.slug}.md`), meetingDocument(item))), ...bundle.teamMeetings.map((item) => fs.writeFile(path.join(outDir, 'meetings', `${item.slug}.md`), meetingDocument(item))), ...bundle.canonicalMeetings.map((item) => fs.writeFile(path.join(outDir, 'meetings', `${item.slug}.md`), canonicalMeetingDocument(item))), ...bundle.upcomingClientMeetings.map((item) => fs.writeFile(path.join(outDir, 'meetings', `${item.slug}.md`), upcomingDocument(item))), ...bundle.meetingPreparations.map((item) => fs.writeFile(path.join(outDir, 'meetings', `${item.slug}.md`), preparationDocument(item)))]);
 };

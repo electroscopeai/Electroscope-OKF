@@ -23,7 +23,11 @@ The exporter calls Electroscope MCP read-only tools:
 - `get_deal`
 - `search_people`
 - `get_person`
-- `get_okf_definition` for the static, versioned export contract
+- `get_okf_definition` for the static, versioned export contract; incompatible definitions fail closed before data export
+- `search_teams`, `get_deal_workspace`, `get_client_workspace`, and `list_team_action_items` for approved bounded Team and workspace concepts
+- `list_client_meeting_timeline` and `get_past_client_meeting_summary` for persisted canonical historical meeting summaries
+- `list_client_upcoming_meetings` for owner-authorized persisted upcoming meeting context
+- `get_client_meeting_preparation` for persisted Meeting Prep only when its active canonical meeting set and source fingerprint are valid
 
 It then writes an OKF bundle with:
 - `index.md`
@@ -31,6 +35,11 @@ It then writes an OKF bundle with:
 - `clients/*.md`
 - `deals/*.md`
 - `people/*.md`
+- `teams/*.md`
+- `deal-workspaces/*.md`
+- `client-workspaces/*.md`
+- `team-action-items/*.md`
+- `meetings/*.md` for canonical client meeting summaries, owner-authorized upcoming client meeting context, Meeting Prep, and optional calendar metadata
 
 ## OKF implementation choices
 
@@ -42,6 +51,8 @@ These choices follow the upstream OKF draft and its best practices:
 - generated `index.md` for progressive disclosure
 - generated `log.md` so process and data-shape changes can be reviewed in git
 - no proprietary schema registry; extra producer-defined fields stay in frontmatter
+- every concept records the MCP contract version, export scope, authorization scope, and export timestamp
+- workspace records use explicit MCP-contract field allowlists; action-item notes, initiative descriptions, attribution snippets, and raw document content are excluded
 
 ## Repository layout
 
@@ -81,9 +92,11 @@ Optional flags:
 
 Meeting export is opt-in because it writes portable calendar metadata. It requires an MCP token with `calendar.metadata:read` and `calendar.team_availability:read` in addition to the standard read scope.
 
+Canonical client meeting discovery runs with the standard `read_only` scope. Its opaque pagination is capped by the exporter, and it writes only the MCP-provided safe projections. It never exports raw transcripts, document content, calendar bodies, attendees, joins, source snapshots, or unresolved owner text. Upcoming client meeting context remains restricted by MCP to the issuing token owner even when the client is team-visible.
+
 ## MCP and OKF definition boundary
 
-The exporter must treat authenticated MCP `get_okf_definition` as the source for the static `electroscope-to-okf` mapping contract. The contract is tenant-independent and versioned; it defines supported concept types, canonical IDs and resources, provenance, visibility, and export limits without exposing a generated bundle or customer content.
+The exporter must treat authenticated MCP `get_okf_definition` as the source for the static `electroscope-to-okf` mapping contract. It accepts compatible `1.3.x`-or-later major-1 contracts only and verifies approved Team/workspace mappings and allowlists before export. The contract is tenant-independent and versioned; it defines supported concept types, canonical IDs and resources, provenance, visibility, and export limits without exposing a generated bundle or customer content.
 
 See [`MCP_DEFINITIONS.md`](./MCP_DEFINITIONS.md) for the current consumer contract.
 

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDealPeopleById, collectCursorResults, collectSearchResults } from '../src/lib/exporter.mjs';
+import { assertOkfDefinitionCompatible, buildDealPeopleById, collectCursorResults, collectSearchResults } from '../src/lib/exporter.mjs';
 
 test('collectSearchResults follows page metadata and dedupes overlapping results', async () => {
   const calls = [];
@@ -128,6 +128,22 @@ test('collectCursorResults follows opaque cursors and dedupes calendar results',
   assert.equal(calls.length, 2);
   assert.equal(calls[1].args.cursor, 'opaque-cursor');
   assert.deepEqual(rows.map((row) => row.calendar_event_id), ['event-1', 'event-2']);
+});
+
+test('assertOkfDefinitionCompatible requires the approved workspace mappings', () => {
+  const definition = {
+    contract_name: 'electroscope-to-okf',
+    contract_version: '1.3.0',
+    supported_concepts: [
+      ['Electroscope Team', 'search_teams'],
+      ['Electroscope Deal Workspace', 'get_deal_workspace'],
+      ['Electroscope Team Action Item Index', 'list_team_action_items'],
+      ['Electroscope Client Workspace', 'get_client_workspace'],
+    ].map(([concept_type, tool]) => ({ concept_type, source_tools: [tool], allowed_fields: [] })),
+  };
+  assert.deepEqual(assertOkfDefinitionCompatible(definition), { contractName: 'electroscope-to-okf', contractVersion: '1.3.0' });
+  assert.throws(() => assertOkfDefinitionCompatible({ ...definition, contract_version: '2.0.0' }), /Incompatible OKF contract version/);
+  assert.throws(() => assertOkfDefinitionCompatible({ ...definition, supported_concepts: [] }), /missing Electroscope Team mapping/);
 });
 
 test('buildDealPeopleById dedupes repeated people per related deal', () => {

@@ -6,7 +6,15 @@ const TOOL_RESULT_KEYS = {
 
 const MAX_PAGE_LIMIT = 25;
 const MAX_PAGES = 10_000;
-const MAX_CURSOR_PAGES = 10_000;
+const MAX_CURSOR_PAGES = 10;
+const SUPPORTED_OKF_CONTRACT_MAJOR = 1;
+const MINIMUM_OKF_CONTRACT_MINOR = 3;
+const REQUIRED_OKF_CONCEPTS = new Map([
+  ['Electroscope Team', 'search_teams'],
+  ['Electroscope Deal Workspace', 'get_deal_workspace'],
+  ['Electroscope Team Action Item Index', 'list_team_action_items'],
+  ['Electroscope Client Workspace', 'get_client_workspace'],
+]);
 
 const dedupeById = (items) => Array.from(new Map(
   items
@@ -146,6 +154,28 @@ export const collectCursorResults = async ({ client, toolName, resultKey, idKey,
   }
 
   throw new Error(`Cursor pagination exceeded ${MAX_CURSOR_PAGES} pages for ${toolName}.`);
+};
+
+export const assertOkfDefinitionCompatible = (definition) => {
+  if (!definition || typeof definition !== 'object' || Array.isArray(definition)) {
+    throw new Error('Invalid get_okf_definition response.');
+  }
+  if (definition.contract_name !== 'electroscope-to-okf') {
+    throw new Error('Unsupported OKF contract name.');
+  }
+  const version = typeof definition.contract_version === 'string' ? definition.contract_version : '';
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+  if (!match || Number(match[1]) !== SUPPORTED_OKF_CONTRACT_MAJOR || Number(match[2]) < MINIMUM_OKF_CONTRACT_MINOR) {
+    throw new Error(`Incompatible OKF contract version: ${version || 'missing'}.`);
+  }
+  const concepts = Array.isArray(definition.supported_concepts) ? definition.supported_concepts : [];
+  for (const [conceptType, toolName] of REQUIRED_OKF_CONCEPTS) {
+    const concept = concepts.find((entry) => entry && entry.concept_type === conceptType);
+    if (!concept || !Array.isArray(concept.source_tools) || !concept.source_tools.includes(toolName) || !Array.isArray(concept.allowed_fields)) {
+      throw new Error(`Incompatible OKF contract: missing ${conceptType} mapping.`);
+    }
+  }
+  return { contractVersion: version, contractName: definition.contract_name };
 };
 
 export const buildDealPeopleById = (people) => {
