@@ -20,11 +20,25 @@ const required = (value, label) => {
   return value;
 };
 
+const mapWithConcurrency = async (items, limit, work) => {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await work(items[index]);
+    }
+  }));
+  return results;
+};
+
 const args = parseArgs(process.argv.slice(2));
 const baseUrl = required(args['base-url'], 'base-url');
 const mcpToken = required(args['mcp-token'], 'mcp-token');
 const scope = args.scope === 'team' ? 'team' : 'tenant';
 const limit = Number(args.limit ?? 25);
+const concurrency = Math.min(Math.max(Math.trunc(Number(args.concurrency ?? 3)) || 3, 1), 5);
 const outDir = path.resolve(args.out ?? `./bundles/${args['tenant-slug'] ?? 'electroscope'}`);
 const meetingStartAt = args['meeting-start-at'];
 const meetingEndAt = args['meeting-end-at'];
@@ -87,20 +101,20 @@ const [personalMeetings, teamMeetings] = meetingStartAt
     ])
   : [[], []];
 
-const detailedClients = await Promise.all(clients.map(async (clientRow) => {
+const detailedClients = await mapWithConcurrency(clients, concurrency, async (clientRow) => {
   const detail = await client.callTool('get_client', { clientId: clientRow.id });
   return detail.structuredContent;
-}));
+});
 
-const detailedDeals = await Promise.all(deals.map(async (dealRow) => {
+const detailedDeals = await mapWithConcurrency(deals, concurrency, async (dealRow) => {
   const detail = await client.callTool('get_deal', { dealId: dealRow.id });
   return detail.structuredContent;
-}));
+});
 
-const detailedPeople = await Promise.all(people.map(async (personRow) => {
+const detailedPeople = await mapWithConcurrency(people, concurrency, async (personRow) => {
   const detail = await client.callTool('get_person', { personId: personRow.id });
   return detail.structuredContent;
-}));
+});
 
 const teamsResult = await client.callTool('search_teams', { query: '' });
 const teams = Array.isArray(teamsResult.structuredContent?.teams)
@@ -113,7 +127,7 @@ const dealPeopleById = buildDealPeopleById(detailedPeople);
 
 // Client meeting tools are already tenant- and team-scoped by MCP. The exporter
 // retains only their documented projections and follows bounded opaque cursors.
-const clientMeetingExports = await Promise.all(detailedClients.map(async (clientDetail) => {
+const clientMeetingExports = await mapWithConcurrency(detailedClients, concurrency, async (clientDetail) => {
   const clientId = clientDetail.id;
   const timeline = await collectCursorResults({
     client,
@@ -123,12 +137,14 @@ const clientMeetingExports = await Promise.all(detailedClients.map(async (client
     arguments: { clientId },
     limit,
   });
-  const summaries = await Promise.all(timeline
-    .filter((meeting) => meeting.canonical_summary_available === true)
-    .map(async (meeting) => (await client.callTool('get_past_client_meeting_summary', {
+  const summaries = await mapWithConcurrency(
+    timeline.filter((meeting) => meeting.canonical_summary_available === true),
+    concurrency,
+    async (meeting) => (await client.callTool('get_past_client_meeting_summary', {
       clientId,
       canonicalMeetingId: meeting.canonical_meeting_id,
-    })).structuredContent));
+    })).structuredContent,
+  );
   const upcomingMeetings = await collectCursorResults({
     client,
     toolName: 'list_client_upcoming_meetings',
@@ -145,10 +161,10 @@ const clientMeetingExports = await Promise.all(detailedClients.map(async (client
       ? [{ ...preparationResult.structuredContent, client_id: clientId }]
       : [],
   };
-}));
+});
 
 const [dealWorkspaces, clientWorkspaces, teamActionItemIndexes] = await Promise.all([
-  Promise.all(detailedDeals.map(async (deal) => {
+  mapWithConcurrency(detailedDeals, concurrency, async (deal) => {
     const result = await client.callTool('get_deal_workspace', { dealId: deal.id });
     const workspace = result.structuredContent ?? {};
     return {
@@ -157,8 +173,8 @@ const [dealWorkspaces, clientWorkspaces, teamActionItemIndexes] = await Promise.
       risks: Array.isArray(workspace.risks) ? workspace.risks.map((item) => ({ provenance: item?.provenance ?? null })) : [],
       action_items: Array.isArray(workspace.action_items) ? workspace.action_items.map((item) => ({ id: item?.id, deal_id: item?.deal_id, title: item?.title, due_date: item?.due_date, category: item?.category, owner_person_id: item?.owner_person_id, state: item?.state, status: item?.status, updated_at: item?.updated_at, provenance: item?.provenance ?? null })) : [],
     };
-  })),
-  Promise.all(detailedClients.map(async (clientDetail) => {
+  }),
+  mapWithConcurrency(detailedClients, concurrency, async (clientDetail) => {
     const result = await client.callTool('get_client_workspace', { clientId: clientDetail.id });
     const workspace = result.structuredContent ?? {};
     return {
@@ -168,15 +184,15 @@ const [dealWorkspaces, clientWorkspaces, teamActionItemIndexes] = await Promise.
       initiatives: Array.isArray(workspace.initiatives) ? workspace.initiatives.map((initiative) => ({ id: initiative?.id, name: initiative?.name, timeline: initiative?.timeline, owner: initiative?.owner ? { personId: initiative.owner.personId, personKey: initiative.owner.personKey, title: initiative.owner.title } : null })) : [],
       provenance: { source: workspace.provenance?.source, attribution_snippets_included: workspace.provenance?.attribution_snippets_included },
     };
-  })),
-  Promise.all(teams.map(async (team) => {
+  }),
+  mapWithConcurrency(teams, concurrency, async (team) => {
     const result = await client.callTool('list_team_action_items', { team_id: team.id, limit: Math.min(Math.max(Math.trunc(limit) || 25, 1), 25) });
     const index = result.structuredContent ?? {};
     return {
       team_id: index.team_id,
       action_items: Array.isArray(index.action_items) ? index.action_items.map((item) => ({ id: item?.id, deal_id: item?.deal_id, deal_name: item?.deal_name, title: item?.title, due_date: item?.due_date, category: item?.category, owner_person_id: item?.owner_person_id, state: item?.state, status: item?.status, updated_at: item?.updated_at, provenance: item?.provenance ?? null })) : [],
     };
-  })),
+  }),
 ]);
 
 const bundle = normalizeBundle({
