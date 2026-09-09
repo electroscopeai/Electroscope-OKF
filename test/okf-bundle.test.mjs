@@ -162,3 +162,39 @@ test('normalizeBundle dedupes repeated entities and preserves unique slugs for c
   assert.deepEqual(bundle.people.map((person) => person.slug), ['taylor-buyer', 'taylor-buyer-person-2']);
   assert.deepEqual(bundle.deals[0].people.map((person) => person.slug), ['taylor-buyer', 'taylor-buyer-person-2']);
 });
+
+test('writeBundle exports approved workspaces with allowlisted fields, provenance, and collision-safe meeting names', async () => {
+  const outDir = await fs.mkdtemp(path.join(os.tmpdir(), 'electroscope-okf-workspaces-'));
+  const bundle = normalizeBundle({
+    scope: 'team',
+    contract: { contractName: 'electroscope-to-okf', contractVersion: '1.3.0' },
+    exportedAt: '2026-07-04T00:00:00.000Z',
+    status: { client_count: 1, deal_count: 1 },
+    clients: [{ id: 'client-1', name: 'Acme', deals: [] }],
+    deals: [{ id: 'deal-1', name: 'Renewal', client: { id: 'client-1', name: 'Acme' }, people: [] }],
+    people: [],
+    teams: [{ id: 'team-1', name: 'Revenue' }],
+    personalMeetings: [{ calendar_event_id: 'personal-1', subject: 'Weekly review', start_at: '2026-07-04T10:00:00.000Z' }],
+    teamMeetings: [{ team_shared_meeting_id: 'team-meeting-1', subject: 'Weekly review', start_at: '2026-07-04T11:00:00.000Z' }],
+    dealWorkspaces: [{ deal: { id: 'deal-1', name: 'Renewal' }, milestones: [{ provenance: { canonical_entity_id: 'milestone-1', source_document_ids: ['doc-1'] } }], risks: [], action_items: [{ id: 'action-1', deal_id: 'deal-1', title: 'Send plan', note: 'must not export', status: 'open', updated_at: '2026-07-04T00:00:00.000Z', provenance: { canonical_entity_id: 'action-1', source_document_ids: ['doc-1'] } }] }],
+    clientWorkspaces: [{ client_id: 'client-1', client_name: 'Acme', risks: [{ id: 'risk-1', risk: 'Delay', mitigation: 'Escalate' }], initiatives: [{ id: 'initiative-1', name: 'Upgrade', description: 'must not export', owner: { personId: 'person-1', title: 'VP' } }], provenance: { source: 'canonical_client_detail_read_model', attribution_snippets_included: false } }],
+    teamActionItemIndexes: [{ team_id: 'team-1', action_items: [{ id: 'action-1', deal_id: 'deal-1', title: 'Send plan', note: 'must not export', status: 'open', provenance: { canonical_entity_id: 'action-1', source_document_ids: ['doc-1'] } }] }],
+  });
+  await writeBundle({ outDir, bundle });
+
+  const dealWorkspace = await fs.readFile(path.join(outDir, 'deal-workspaces', 'deal-workspace-renewal.md'), 'utf8');
+  const clientWorkspace = await fs.readFile(path.join(outDir, 'client-workspaces', 'client-workspace-acme.md'), 'utf8');
+  const actionIndex = await fs.readFile(path.join(outDir, 'team-action-items', 'team-action-items-revenue.md'), 'utf8');
+  const team = await fs.readFile(path.join(outDir, 'teams', 'revenue.md'), 'utf8');
+  const index = await fs.readFile(path.join(outDir, 'index.md'), 'utf8');
+  assert.match(dealWorkspace, /contract_version: "1.3.0"/);
+  assert.match(dealWorkspace, /export_scope: "team"/);
+  assert.match(dealWorkspace, /Source document IDs: doc-1/);
+  assert.doesNotMatch(dealWorkspace, /must not export/);
+  assert.doesNotMatch(clientWorkspace, /must not export/);
+  assert.doesNotMatch(actionIndex, /must not export/);
+  assert.match(team, /team-action-items\/team-action-items-revenue.md/);
+  assert.match(actionIndex, /\[Send plan\]\(\.\.\/deals\/renewal.md\)/);
+  assert.match(index, /meetings\/weekly-review.md/);
+  assert.match(index, /meetings\/weekly-review-team_sha.md/);
+});
