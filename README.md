@@ -24,6 +24,9 @@ The exporter calls Electroscope MCP read-only tools:
 - `search_people`
 - `get_person`
 - `get_okf_definition` for the static, versioned export contract
+- `list_client_meeting_timeline` and `get_past_client_meeting_summary` for persisted canonical historical meeting summaries
+- `list_client_upcoming_meetings` for owner-authorized persisted upcoming meeting context
+- `get_client_meeting_preparation` for persisted Meeting Prep only when its active canonical meeting set and source fingerprint are valid
 
 It then writes an OKF bundle with:
 - `index.md`
@@ -31,6 +34,7 @@ It then writes an OKF bundle with:
 - `clients/*.md`
 - `deals/*.md`
 - `people/*.md`
+- `meetings/*.md` for canonical client meeting summaries, owner-authorized upcoming client meeting context, Meeting Prep, and optional calendar metadata
 
 ## OKF implementation choices
 
@@ -80,6 +84,8 @@ Optional flags:
 - `--team-id <uuid>`, `--meeting-start-at <ISO-8601>`, and `--meeting-end-at <ISO-8601>` must be supplied together to export both the issuing user’s redacted calendar events and explicitly shared team meetings
 
 Meeting export is opt-in because it writes portable calendar metadata. It requires an MCP token with `calendar.metadata:read` and `calendar.team_availability:read` in addition to the standard read scope.
+
+Canonical client meeting discovery runs with the standard `read_only` scope. Its opaque pagination is capped by the exporter, and it writes only the MCP-provided safe projections. It never exports raw transcripts, document content, calendar bodies, attendees, joins, source snapshots, or unresolved owner text. Upcoming client meeting context remains restricted by MCP to the issuing token owner even when the client is team-visible.
 
 ## MCP and OKF definition boundary
 

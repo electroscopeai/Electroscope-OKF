@@ -6,7 +6,7 @@ const TOOL_RESULT_KEYS = {
 
 const MAX_PAGE_LIMIT = 25;
 const MAX_PAGES = 10_000;
-const MAX_CURSOR_PAGES = 10_000;
+const MAX_CURSOR_PAGES = 10;
 
 const dedupeById = (items) => Array.from(new Map(
   items

@@ -101,6 +101,42 @@ const detailedPeople = await Promise.all(people.map(async (personRow) => {
 
 const dealPeopleById = buildDealPeopleById(detailedPeople);
 
+// Client meeting tools are already tenant- and team-scoped by MCP. The exporter
+// retains only their documented projections and follows bounded opaque cursors.
+const clientMeetingExports = await Promise.all(detailedClients.map(async (clientDetail) => {
+  const clientId = clientDetail.id;
+  const timeline = await collectCursorResults({
+    client,
+    toolName: 'list_client_meeting_timeline',
+    resultKey: 'meetings',
+    idKey: 'canonical_meeting_id',
+    arguments: { clientId },
+    limit,
+  });
+  const summaries = await Promise.all(timeline
+    .filter((meeting) => meeting.canonical_summary_available === true)
+    .map(async (meeting) => (await client.callTool('get_past_client_meeting_summary', {
+      clientId,
+      canonicalMeetingId: meeting.canonical_meeting_id,
+    })).structuredContent));
+  const upcomingMeetings = await collectCursorResults({
+    client,
+    toolName: 'list_client_upcoming_meetings',
+    resultKey: 'upcoming_meetings',
+    idKey: 'upcoming_meeting_id',
+    arguments: { clientId },
+    limit,
+  });
+  const preparationResult = await client.callTool('get_client_meeting_preparation', { clientId });
+  return {
+    canonicalMeetings: summaries.map((summary) => ({ ...summary, client_id: clientId })),
+    upcomingClientMeetings: upcomingMeetings.map((meeting) => ({ ...meeting, client_id: clientId })),
+    meetingPreparations: preparationResult.structuredContent?.preparation
+      ? [{ ...preparationResult.structuredContent, client_id: clientId }]
+      : [],
+  };
+}));
+
 const bundle = normalizeBundle({
   scope,
   status: statusResult.structuredContent,
@@ -112,6 +148,9 @@ const bundle = normalizeBundle({
   people: detailedPeople,
   personalMeetings,
   teamMeetings,
+  canonicalMeetings: clientMeetingExports.flatMap((result) => result.canonicalMeetings),
+  upcomingClientMeetings: clientMeetingExports.flatMap((result) => result.upcomingClientMeetings),
+  meetingPreparations: clientMeetingExports.flatMap((result) => result.meetingPreparations),
 });
 
 await writeBundle({ outDir, bundle });
@@ -124,4 +163,7 @@ console.log(JSON.stringify({
   people: bundle.people.length,
   personalMeetings: bundle.personalMeetings.length,
   teamMeetings: bundle.teamMeetings.length,
+  canonicalMeetings: bundle.canonicalMeetings.length,
+  upcomingClientMeetings: bundle.upcomingClientMeetings.length,
+  meetingPreparations: bundle.meetingPreparations.length,
 }, null, 2));

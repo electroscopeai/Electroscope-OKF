@@ -86,6 +86,52 @@ test('writeBundle writes index, log, and concept documents with cross-links', as
   assert.match(teamMeetingDoc, /Classification: internal/);
 });
 
+test('writeBundle preserves client meeting summaries, upcoming context, Meeting Prep, and client links without raw source fields', async () => {
+  const outDir = await fs.mkdtemp(path.join(os.tmpdir(), 'electroscope-okf-client-meetings-'));
+  const bundle = normalizeBundle({
+    scope: 'tenant',
+    status: { client_count: 1, deal_count: 0 },
+    clients: [{ id: 'client-1', name: 'Acme Corp', deals: [] }],
+    deals: [],
+    people: [],
+    canonicalMeetings: [{
+      client_id: 'client-1',
+      client: { id: 'client-1', name: 'Acme Corp' },
+      meeting: { canonical_meeting_id: 'meeting-1', subject: 'Architecture review', started_at: '2026-07-02T12:00:00.000Z', deal_id: null },
+      canonical_summary: { rendered: { purpose: 'Confirm architecture', key_points: ['Confirm security review'], action_items: ['Send diagram'] } },
+      provenance: { authority: 'canonical_meeting_summary', generated_at: '2026-07-02T13:00:00.000Z', prompt_version: 'v1', person_resolution_fingerprint: 'fingerprint-1' },
+      raw_transcript: 'must not be rendered',
+    }],
+    upcomingClientMeetings: [{ client_id: 'client-1', upcoming_meeting_id: 'upcoming-1', subject: 'Planning session', start_at: '2026-07-03T12:00:00.000Z', prep_status: 'ready', source_snapshot: { secret: true } }],
+    meetingPreparations: [{
+      client_id: 'client-1',
+      client: { id: 'client-1', name: 'Acme Corp' },
+      preparation: { id: 'prep-1', summary: { rendered: { purpose: 'Prepare agenda', key_points: ['Review risks'], action_items: ['Confirm owner'] } }, generated_at: '2026-07-03T10:00:00.000Z', source_fingerprint: 'source-1', latest_meeting_id: 'meeting-1', prompt_version: 'v2' },
+      validity: { status: 'active_meeting_set_match' },
+    }],
+  });
+
+  await writeBundle({ outDir, bundle });
+
+  const index = await fs.readFile(path.join(outDir, 'index.md'), 'utf8');
+  const client = await fs.readFile(path.join(outDir, 'clients', 'acme-corp.md'), 'utf8');
+  const summary = await fs.readFile(path.join(outDir, 'meetings', 'architecture-review.md'), 'utf8');
+  const upcoming = await fs.readFile(path.join(outDir, 'meetings', 'planning-session.md'), 'utf8');
+  const preparation = await fs.readFile(path.join(outDir, 'meetings', 'meeting-preparation-for-acme-corp.md'), 'utf8');
+
+  assert.match(index, /## Canonical Client Meeting Summaries/);
+  assert.match(index, /## Upcoming Client Meeting Context/);
+  assert.match(index, /## Client Meeting Preparation/);
+  assert.match(client, /# Meeting Knowledge/);
+  assert.match(summary, /type: "Electroscope Canonical Client Meeting"/);
+  assert.match(summary, /Confirm security review/);
+  assert.doesNotMatch(summary, /must not be rendered/);
+  assert.match(upcoming, /type: "Electroscope Upcoming Client Meeting Context"/);
+  assert.doesNotMatch(upcoming, /source_snapshot/);
+  assert.match(preparation, /type: "Electroscope Client Meeting Preparation"/);
+  assert.match(preparation, /Validity: active_meeting_set_match/);
+});
+
 test('normalizeBundle dedupes repeated entities and preserves unique slugs for colliding names', () => {
   const bundle = normalizeBundle({
     scope: 'tenant',
